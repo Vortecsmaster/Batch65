@@ -7,6 +7,7 @@ module Deploy
     , writeUnit
     , writeDatum
     , writeRedeemer
+    , badRedeemer
     , writeBountyValidator
     ) where
 
