@@ -1,7 +1,7 @@
 cardano-cli transaction build \
   --babbage-era \
   $PREPROD \
-  --tx-in 1f0d45713071d897c74e6ddefceae390d71c87a0cdbf750cc864f006d006297f#0 \
+  --tx-in 26563357f4f511d38727ce6a491f564fc79825a3fe98c30e4947adf2bd44c939#0 \
   --tx-out $(cat mathBounty.addr)+500000000 \
   --tx-out-datum-hash-file datum.json \
   --change-address $Adr01 \
@@ -9,7 +9,7 @@ cardano-cli transaction build \
 
 cardano-cli transaction sign \
   --tx-body-file tx.unsigned \
-  --signing-key-file Adr01.skey \
+  --signing-key-file Adr10.skey \
   $PREPROD \
   --out-file tx.signed
 

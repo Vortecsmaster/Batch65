@@ -1,24 +1,24 @@
 cardano-cli transaction build \
   --babbage-era \
-  $PREVIEW \
-  --tx-in 35d4acfe8b1fdf06a4842152b811ff7bd0e9e95077132a00937945293bae0feb#1 \
+  $PREPROD \
+  --tx-in 7ba89bcb9a5b1ed165dfeeef71b424561a5235d677940f9707ecccee73be41d1#1 \
   --tx-in-script-file ./mathBounty.plutus \
-  --tx-in-datum-file ./datum.json  \
+  --tx-in-datum-file ./datum.json \
   --tx-in-redeemer-file ./goodRedeemer.json \
-  --required-signer-hash 8fd2af318fe6fd7a8b2f56861b7dda312411281616b902953abf7121 \
-  --tx-in-collateral 509338748525e597f5dffe00b11944a53db75e48d53b29dd6b7e5bbe5e1eb40c#0 \
+  --required-signer-hash 697a501b7d05766b3d08e39dab43e0f170973d3398b28745b3b8ce55 \
+  --tx-in-collateral 49842d4e339a80c58e0510d43226ce9bce213fee46d0e0135bbfe79afd391f4f#0 \
   --tx-out $Adr01+44000000 \
   --change-address $nami \
-  --invalid-hereafter 4522475 \
+  --invalid-hereafter 12150906 \
   --protocol-params-file ./protocol.params \
   --out-file tx.body
 
 cardano-cli transaction sign \
     --tx-body-file tx.body \
-    --signing-key-file Adr01.skey \
-    $PREVIEW \
+    --signing-key-file Adr07.skey \
+    $PREPROD \
     --out-file tx.signed
 
 cardano-cli transaction submit \
-    $PREVIEW \
+    $PREPROD \
     --tx-file tx.signed
