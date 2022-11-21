@@ -13,70 +13,54 @@
 {-# OPTIONS_GHC -fno-warn-unused-imports #-}
 {-# LANGUAGE NumericUnderscores #-}
 
-module MathBounty where
+module NFTBounty where
 
+import           Control.Monad             (void)
+--import qualified Data.ByteString.Char8     as C
+import Data.Default               (Default (..))
+import Data.Text                  (Text)
+import Data.Void
+import Data.Map as Map
+--import           Codec.Serialise
 import qualified PlutusTx         as PlutusTx
 import           PlutusTx.Prelude hiding (pure, (<$>), Semigroup (..))
-
+import           Plutus.Contract
+import           Plutus.Trace.Emulator  as Emulator
 import           Ledger                    
 import qualified Ledger.Constraints        as Constraints
 import qualified Ledger.Typed.Scripts      as Scripts
 import           Ledger.Ada                as Ada
-import           Ledger.TimeSlot
-import           PlutusTx.IsData.Class (toBuiltinData)
-
-import           Plutus.Contract
+import           Ledger.Value              as Value
 import           Playground.Contract
-
-import qualified Plutus.Trace              as Trace
-import           Plutus.Trace.Emulator     as Emulator
-import           Wallet.Emulator.Wallet
-
-import           Control.Monad             (void)
-import           Data.Default              (Default (..))
-import           Data.Text                 (Text)
-import           Data.Void
-import           Data.Map                  as Map
-import           Prelude (IO, Show, String, show, Semigroup (..))
+import qualified Prelude
+import Prelude (IO, Show, String, show, Semigroup (..))
 import           Text.Printf          (printf)
-import           Data.Aeson           (FromJSON, ToJSON)
-import           GHC.Generics         (Generic)
+import Ledger.TimeSlot
+import qualified Plutus.Trace as Trace
+import Wallet.Emulator.Wallet
+import qualified Control.Monad.Freer.Extras as Extras
+--import qualified Data.OpenApi.Schema as OApi
+import PlutusTx.IsData.Class (toBuiltinData)
 
---ON-CHAIN CODE
+--OFF-CHAIN CODE
 
-data MathBountyDatum = MBD 
-                      { mbdMath :: Integer
-                      , mbdDeadline :: POSIXTime
-                      }
-                      
-PlutusTx.makeIsDataIndexed ''MathBountyDatum [('MBD,0)]
+data MathBountyDatum = MBD
+    { mBounty :: Integer
+    , deadline :: POSIXTime
+    } 
+PlutusTx.unstableMakeIsData ''MathBountyDatum
 
-{- TAKE OUT THIS COMMENTS ON PLAYGROUND
---option 1
---deriving (PlutusTx.ToData, PlutusTx.FromData, PlutusTx.UnsafeFromData)
---PlutusTx.makeLift ''MathBountyDatum
+{-# INLINABLE mathBountyValidator  #-}
+mathBountyValidator :: MathBountyDatum -> Integer -> ScriptContext -> Bool
+mathBountyValidator datum x sContext = traceIfFalse "Wrong guess!" ((mBounty datum) == x*x) &&
+                                       traceIfFalse "Deadline passed!" deadlineReached
+                                            
+        where
+            info :: TxInfo
+            info = scriptContextTxInfo sContext
 
---option 2 (no problems with newtypes)
---PlutusTx.unsafeMakeIsData ''MathBountyDatum
--}
-
-
-{-# INLINABLE mathBountyValidator #-}
-mathBountyValidator :: MathBountyDatum -> Integer -> ScriptContext -> Bool 
-mathBountyValidator datum redeemer sContext = traceIfFalse "Wrong X!" (mbdMath datum == redeemer*redeemer) &&
-                                              traceIfFalse "Deadline passed" deadlineReached
-    where
-      info :: TxInfo
-      info = scriptContextTxInfo sContext
-
-      deadlineReached :: Bool
-      deadlineReached =  (to $ mbdDeadline datum) `contains` (txInfoValidRange info)
-
---{-# INLINABLE info #-} 
---      info :: TxInfo
---      info = scriptContextTxInfo sContext
-
--- CLI lowerbound paramter be like = --invalid-before 61967066 \
+            deadlineReached :: Bool
+            deadlineReached = contains (to $ deadline datum) $ txInfoValidRange info
 
 data MathBounty
 instance Scripts.ValidatorTypes MathBounty where
@@ -93,8 +77,38 @@ bountyValidator = Scripts.mkTypedValidator @MathBounty
 validator :: Validator
 validator = Scripts.validatorScript bountyValidator
 
-bountyAddress :: Ledger.Address       
-bountyAddress = scriptAddress validator  
+bountyScript :: Ledger.ValidatorHash  --Script  
+bountyScript = Scripts.validatorHash bountyValidator --unValiatorScript validator
+
+bountyAddress :: Ledger.Address       --Address
+bountyAddress = scriptAddress validator  --Ledger.scriptAddress validator
+
+{-# INLINABLE nftMintingPolicy  #-}
+nftMintingPolicy :: TxOutRef -> TokenName -> () -> ScriptContext -> Bool
+nftMintingPolicy oref tname _ sContext = traceIfFalse "UTxO not consumed" hasUTxO &&
+                                         traceIfFalse "There can only be ONE!" onlyONE
+    where
+        info :: TxInfo
+        info = scriptContextTxInfo sContext
+
+        hasUTxO :: Bool
+        hasUTxO = any (\utxo -> txInInfoOutRef utxo == oref) $ txInfoInputs info
+
+        onlyONE :: Bool
+        onlyONE = case flattenValue (txInfoMint info) of
+             [(_,tname',amount)]   -> tname' == tname && amount == 1
+             _                     -> False
+
+policy ::  TxOutRef -> TokenName -> Scripts.MintingPolicy
+policy oref tname = mkMintingPolicyScript $
+       $$(PlutusTx.compile [|| \oref' tname' -> Scripts.wrapMintingPolicy $ nftMintingPolicy oref' tname' ||])
+       `PlutusTx.applyCode`
+       PlutusTx.liftCode oref
+       `PlutusTx.applyCode`
+       PlutusTx.liftCode tname
+
+curSymbol ::  TxOutRef -> TokenName -> CurrencySymbol
+curSymbol oref tname = scriptCurrencySymbol $ policy oref tname
 
 --OFF-CHAIN
 
@@ -130,9 +144,14 @@ solution guess = do
                  case Map.toList unspentOutput of
                   []             -> logInfo @String $ printf "No UTxOs on the Contract!"
                   (oref,a):utxos -> do
-                                    let lookups = Constraints.unspentOutputs (Map.fromList [(oref,a)]) <>
-                                                  Constraints.otherScript validator 
-                                    let tx = Constraints.mustSpendScriptOutput oref (Redeemer $ toBuiltinData guess) <> Constraints.mustValidateIn (to now)
+                                    let tname = TokenName "BountyWinner!"
+                                        val = Value.singleton (curSymbol oref tname) tname 1
+                                        lookups = Constraints.unspentOutputs (Map.fromList [(oref,a)]) <>
+                                                  Constraints.otherScript validator <>
+                                                  Constraints.mintingPolicy (policy oref tname)
+                                    let tx = Constraints.mustSpendScriptOutput oref (Redeemer $ toBuiltinData guess) <>
+                                             Constraints.mustValidateIn (to now) <>
+                                             Constraints.mustMintValue val
                                     ledgerTx <- submitTxConstraintsWith @Void lookups tx
                                     void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
                                     logInfo @String $ printf "Proposed solution is: %d" (guess)     
@@ -157,4 +176,4 @@ test = runEmulatorTraceIO $ do
     callEndpoint @"solution" h2 $ 5 
     void $ Emulator.waitNSlots 2
     callEndpoint @"solution" h3 $ 10
-    void $ Emulator.waitNSlots 11
+    void $ Emulator.waitNSlots 11  
